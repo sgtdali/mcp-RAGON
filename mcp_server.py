@@ -11,6 +11,10 @@ from ragon_core import search_organizational_memory
 # 1. Initialize FastAPI App
 app = FastAPI(title="RAGON MCP Server")
 
+@app.get("/")
+async def root():
+    return {"status": "online", "message": "RAGON MCP Server is running"}
+
 # 2. Create MCP Server Instance
 server = Server("ragon-memory")
 
