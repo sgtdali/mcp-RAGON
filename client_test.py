@@ -20,17 +20,24 @@ async def main():
             # SSE Iterator oluştur
             lines = response.aiter_lines()
             
+            dynamic_post_endpoint = None
+
             # İlk event'i bekle (endpoint bildirimi)
-            # MCP Protokolü gereği sunucu önce endpoint URL'sini bildirir.
-            # Bizim kodumuzda bu '/messages' olacak ama beklemek "hazır" olduğundan emin olur.
             async for line in lines:
                 if line.startswith("event: endpoint"):
                     # Bir sonraki satır data olmalı
                     continue
                 if line.startswith("data: "):
-                    print(f"Received initial event: {line}")
+                    # Sunucu bize "/messages?session_id=..." dönecek
+                    endpoint_path = line[6:].strip()
+                    dynamic_post_endpoint = f"{SERVER_URL}{endpoint_path}"
+                    print(f"Received endpoint: {dynamic_post_endpoint}")
                     break
             
+            if not dynamic_post_endpoint:
+                print("Failed to receive endpoint event.")
+                return
+
             print("Server ready. Starting handshake...")
 
             # 2. Initialize İsteği Gönder (JSON-RPC)
@@ -39,14 +46,15 @@ async def main():
                 "id": 1,
                 "method": "initialize",
                 "params": {
-                    "protocolVersion": "2024-11-05",
+                    "protocolVersion": "2024-11-05", # Updated specifically for this manual server
                     "capabilities": {},
                     "clientInfo": {"name": "manual-test", "version": "1.0"}
                 }
             }
             
             print("\nSending Initialize...")
-            r = await client.post(POST_ENDPOINT, json=init_payload)
+            # Artık dinamik endpoint'i kullanıyoruz (session_id içinde)
+            r = await client.post(dynamic_post_endpoint, json=init_payload)
             print(f"Init status: {r.status_code}")
             if r.status_code != 202 and r.status_code != 200:
                 print(f"Init failed: {r.text}")
@@ -57,7 +65,7 @@ async def main():
                 "jsonrpc": "2.0",
                 "method": "notifications/initialized"
             }
-            await client.post(POST_ENDPOINT, json=max_payload)
+            await client.post(dynamic_post_endpoint, json=max_payload)
 
             # 4. Tool Listeleme
             list_tools_payload = {
@@ -67,7 +75,7 @@ async def main():
             }
             
             print("\nRequesting Tools List...")
-            await client.post(POST_ENDPOINT, json=list_tools_payload)
+            await client.post(dynamic_post_endpoint, json=list_tools_payload)
             
             # 5. Arama Yapma (Test Query)
             query = "saha sorumlusu görevleri"
@@ -82,7 +90,7 @@ async def main():
             }
             
             print(f"\nCalling Tool 'search_knowledge_base' with query: '{query}'...")
-            await client.post(POST_ENDPOINT, json=call_tool_payload)
+            await client.post(dynamic_post_endpoint, json=call_tool_payload)
 
             print("\nListening for responses (Process will stop after receiving results)...")
             

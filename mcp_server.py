@@ -118,13 +118,13 @@ async def process_rpc_request(session_id, request):
                 "tools": [
                     {
                         "name": "search_knowledge_base",
-                        "description": "Search organizational policies, job descriptions and authority limits.",
+                        "description": "Searches the internal company knowledge base (RAGON Memory). Use this tool ONLY when the user asks specifically about internal company policies, job descriptions, roles (e.g., Saha Sorumlusu), authority limits, project procedures, or organizational decisions. Do NOT use this tool for general knowledge questions (e.g., world facts, coding help, math) or simple greetings.",
                         "inputSchema": {
                             "type": "object",
                             "properties": {
                                 "query": {
                                     "type": "string",
-                                    "description": "Search query"
+                                    "description": "Specific search query related to internal documents."
                                 }
                             },
                             "required": ["query"]
