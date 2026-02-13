@@ -15,6 +15,15 @@ app = FastAPI(title="RAGON MCP Server")
 async def root():
     return {"status": "online", "message": "RAGON MCP Server is running"}
 
+@app.get("/debug")
+async def debug():
+    import mcp.server
+    from mcp.server.sse import SseServerTransport
+    return {
+        "server_attrs": dir(mcp.server.Server),
+        "transport_attrs": dir(SseServerTransport)
+    }
+
 # 2. Create MCP Server Instance
 server = Server("ragon-memory")
 
@@ -76,22 +85,15 @@ async def handle_sse(request: Request):
     async def event_generator():
         global _transport
         try:
-            async with server.run_sse(_transport) as streams:
-                async for message in streams:
-                    # 'message' is typically a ServerSseMessage object with 'event' and 'data'
-                    # We need to serialize the data field (often a JSON-RPC dict or model)
-                    
-                    event_type = message.event
-                    
-                    if hasattr(message.data, "model_dump_json"):
-                        data = message.data.model_dump_json()
-                    elif isinstance(message.data, (dict, list)):
-                        data = json.dumps(message.data)
-                    else:
-                        data = str(message.data)
-                    
-                    # Construct SSE formatted message
-                    yield f"event: {event_type}\ndata: {data}\n\n"
+            # Connect the transport streams to the server's run loop
+            # SseServerTransport provides read_stream and write_stream directly compatible with server.run
+            # Note: server.run is a blocking call that runs the MCP protocol loop
+            
+            await server.run(
+                _transport.read_stream,
+                _transport.write_stream,
+                server.create_initialization_options()
+            )
                     
         except asyncio.CancelledError:
             print("SSE connection cancelled")
@@ -99,7 +101,28 @@ async def handle_sse(request: Request):
             print(f"SSE Error: {str(e)}")
             yield f"event: error\ndata: {str(e)}\n\n"
 
-    return StreamingResponse(event_generator(), media_type="text/event-stream")
+    # The SseServerTransport writes to its internal buffer. 
+    # We need to yield these messages to the HTTP client.
+    # However, SseServerTransport isn't designed to be iterated directly like 'async for message in streams'.
+    # It seems we need a different approach for manual SSE with mcp library.
+    
+    # Correction: The standard mcp.server.sse.SseServerTransport in Python SDK 
+    # usually handles the SSE response generation itself via starlette/fastapi integration.
+    # Since we are doing it MANUALLY, we should hook into the initialization.
+    
+    # Let's revert to a simpler method: Iterate the simple messages if strict valid server.run isn't easy.
+    # BUT, 'server.run' is THE way to start the server logic.
+    
+    # We need to bridge the output of the transport to the generator.
+    # Let's use the valid approach for manual integration:
+    
+    async def output_bridge():
+        # Yield the endpoint event first.
+        # SseServerTransport usually prepares this.
+        # We can construct it manually if needed, but let's see if we can read from the transport's output.
+        pass
+
+    return StreamingResponse(_transport.sse_response_stream(), media_type="text/event-stream")
 
 @app.post("/messages")
 async def handle_messages(request: Request):
