@@ -12,6 +12,122 @@ app = FastAPI(title="RAGON MCP Server - Manual Implementation")
 async def root():
     return {"status": "online", "message": "RAGON MCP Server is running (Manual Mode)"}
 
+
+# ─────────────────────────────────────────────
+# Streamable HTTP Transport  (Claude.ai uyumlu)
+# ─────────────────────────────────────────────
+
+TOOL_DEF = {
+    "name": "search_knowledge_base",
+    "description": (
+        "Şirket içi organizasyon dokümanlarını, görev tanımlarını, yetki limitlerini, "
+        "politikaları ve süreç dokümanlarını arar. "
+        "Roller, unvanlar, hiyerarşi, onay mekanizmaları hakkında soru geldiğinde kullan. "
+        "Genel kültür veya kodlama sorularında KULLANMA."
+    ),
+    "inputSchema": {
+        "type": "object",
+        "required": ["query"],
+        "properties": {
+            "query": {
+                "type": "string",
+                "description": "Arama sorgusu. Çoklu konu için || kullan. Örn: 'Saha yetkisi || Saha sorumlusu limiti'"
+            },
+            "deep_mode": {
+                "type": "boolean",
+                "description": "Graf bağlantılarını da tara. Varsayılan: true",
+                "default": True
+            }
+        }
+    }
+}
+
+
+@app.post("/mcp")
+async def handle_mcp(request: Request):
+    """
+    Streamable HTTP Transport — Claude.ai custom connector için.
+    Tek endpoint, tüm JSON-RPC metodlarını karşılar.
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        return Response(status_code=400, content="Invalid JSON")
+
+    rpc_id = body.get("id")
+    method = body.get("method")
+    params = body.get("params", {})
+
+    def ok(result):
+        return {"jsonrpc": "2.0", "id": rpc_id, "result": result}
+
+    def err(code, message):
+        return {"jsonrpc": "2.0", "id": rpc_id, "error": {"code": code, "message": message}}
+
+    if method == "initialize":
+        return ok({
+            "protocolVersion": "2024-11-05",
+            "capabilities": {"tools": {}},
+            "serverInfo": {"name": "ragon", "version": "1.0.0"}
+        })
+
+    elif method == "notifications/initialized":
+        return Response(status_code=204)
+
+    elif method == "tools/list":
+        return ok({"tools": [TOOL_DEF]})
+
+    elif method == "tools/call":
+        tool_name = params.get("name")
+        args = params.get("arguments", {})
+
+        if tool_name != "search_knowledge_base":
+            return err(-32601, f"Unknown tool: {tool_name}")
+
+        try:
+            query = args.get("query", "")
+            deep = args.get("deep_mode", True)
+            results = search_organizational_memory(query, deep_mode=deep)
+
+            output = f"**Sorgu:** {query}\n\n"
+
+            if results.get("results"):
+                output += f"## Sonuçlar ({len(results['results'])})\n\n"
+                for r in results["results"][:5]:
+                    output += f"### 📄 {r['source']} (skor: {r['score']:.4f})\n"
+                    output += f"{r['content']}\n\n"
+                    if r.get("references"):
+                        output += f"*Referanslar: {', '.join(r['references'][:3])}*\n"
+                    output += "---\n"
+
+            if results.get("deep_results"):
+                output += f"\n## Graf Bağlantıları ({len(results['deep_results'])})\n\n"
+                for dr in results["deep_results"][:3]:
+                    output += f"**{dr['source']}** (benzerlik: {dr['score']:.4f})\n"
+                    output += f"{dr['content']}\n\n"
+
+            if not results.get("results") and not results.get("deep_results"):
+                output += "Bu sorgu için ilgili doküman bulunamadı."
+
+            return ok({
+                "content": [{"type": "text", "text": output}],
+                "isError": False
+            })
+
+        except Exception as e:
+            return ok({
+                "content": [{"type": "text", "text": f"Hata: {str(e)}"}],
+                "isError": True
+            })
+
+    elif method == "ping":
+        return ok({})
+
+    else:
+        if rpc_id is not None:
+            return err(-32601, f"Unknown method: {method}")
+        return Response(status_code=204)
+
 # 2. Global Event Helper
 # Store client queues: session_id -> asyncio.Queue
 CLIENT_QUEUES = {}
